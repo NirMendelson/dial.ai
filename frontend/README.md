@@ -21,4 +21,4 @@ Then start the app:
 npm run dev
 ```
 
-Open `http://localhost:5173`. Use the camera mode buttons to switch between POV, top-down recon, and overview. **Move to next waypoint** demonstrates smooth drone navigation between fixed Tel Aviv locations.
+Open `http://localhost:5173`. Use the camera mode buttons to switch between POV, top-down recon, and overview. **Move to next waypoint** demonstrates smooth drone navigation around Albury in the Surrey Hills near Guildford, UK.

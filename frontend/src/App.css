@@ -194,7 +194,7 @@ button {
   right: 20px;
   bottom: 112px;
   display: flex;
-  width: 250px;
+  width: 286px;
   flex-direction: column;
   padding: 15px 17px;
   text-align: right;
@@ -210,11 +210,77 @@ button {
   letter-spacing: 0.05em;
 }
 
-.location-card span {
+.location-card .formatted-coordinate {
   margin-top: 5px;
   color: var(--hud-muted);
   font-size: 9px;
   letter-spacing: 0.08em;
+}
+
+.coordinate-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 14px;
+  text-align: left;
+}
+
+.coordinate-fields label {
+  min-width: 0;
+}
+
+.coordinate-fields label span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--hud-muted);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.coordinate-fields input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  outline: none;
+  padding: 8px;
+  color: var(--hud-bright);
+  background: rgba(2, 10, 7, 0.72);
+  font: 10px/1.2 inherit;
+}
+
+.coordinate-fields input:focus {
+  border-color: rgba(201, 255, 224, 0.65);
+  box-shadow: 0 0 0 1px rgba(201, 255, 224, 0.12);
+}
+
+.location-card button {
+  margin-top: 9px;
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  color: var(--hud-bright);
+  background: rgba(185, 255, 215, 0.09);
+  cursor: pointer;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.location-card button:hover:not(:disabled) {
+  color: #06100d;
+  background: var(--hud);
+}
+
+.location-card button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.location-card .coordinate-error {
+  margin: 7px 0 0;
+  color: #ff9a9a;
+  font-size: 8px;
+  text-align: left;
 }
 
 .reticle {
@@ -427,6 +493,65 @@ button {
   border-radius: 50%;
 }
 
+.waypoint-marker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  padding: 0 0 13px;
+  color: var(--hud);
+  background: transparent;
+  cursor: pointer;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.72));
+  transform-origin: 12px bottom;
+}
+
+.waypoint-marker::after {
+  position: absolute;
+  bottom: 0;
+  left: 12px;
+  width: 1px;
+  height: 14px;
+  background: rgba(201, 255, 224, 0.8);
+  content: '';
+}
+
+.waypoint-pin {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border: 1px solid rgba(201, 255, 224, 0.9);
+  border-radius: 50%;
+  color: #07100c;
+  background: rgba(201, 255, 224, 0.9);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.waypoint-label {
+  padding: 5px 7px;
+  border: 1px solid rgba(201, 255, 224, 0.25);
+  color: var(--hud-bright);
+  background: rgba(4, 14, 10, 0.84);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
+.waypoint-marker:hover .waypoint-label,
+.waypoint-marker.active .waypoint-label {
+  color: #06100d;
+  background: var(--hud);
+}
+
+.waypoint-marker.active .waypoint-pin {
+  box-shadow: 0 0 20px rgba(131, 255, 183, 0.85);
+}
+
 .mapboxgl-ctrl-logo,
 .mapboxgl-ctrl-attrib {
   opacity: 0.55;
@@ -455,7 +580,7 @@ button {
   .location-card {
     right: 12px;
     bottom: 112px;
-    width: 220px;
+    width: 270px;
   }
 
   .command-deck {

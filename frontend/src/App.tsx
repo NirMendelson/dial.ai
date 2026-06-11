@@ -6,28 +6,48 @@ import './App.css'
 type CameraMode = 'pov' | 'recon' | 'overview'
 type Coordinates = [longitude: number, latitude: number]
 
-const waypoints: Array<{ name: string; coordinates: Coordinates }> = [
-  { name: 'Begin Base', coordinates: [34.79182, 32.0722] },
-  { name: 'Azrieli Perimeter', coordinates: [34.7899, 32.0742] },
-  { name: 'Sarona Sector', coordinates: [34.7867, 32.0711] },
+const initialWaypoints: Array<{ name: string; coordinates: Coordinates }> = [
+  { name: 'Hill', coordinates: [-116.655204, 35.273822] },
+  { name: 'Hill 2', coordinates: [-116.650706, 35.268734] },
+  { name: 'Hill 3', coordinates: [-116.656009, 35.267672] },
+  { name: 'Hill 4', coordinates: [-116.657988, 35.270774] },
 ]
 
 const cameraSettings: Record<
   CameraMode,
   { zoom: number; pitch: number; bearing: number }
 > = {
-  pov: { zoom: 18.2, pitch: 72, bearing: 24 },
+  pov: { zoom: 17.2, pitch: 70, bearing: 58 },
   recon: { zoom: 18.6, pitch: 0, bearing: 0 },
   overview: { zoom: 15.8, pitch: 42, bearing: -12 },
+}
+
+function formatCoordinate(value: number, positive: string, negative: string) {
+  return `${Math.abs(value).toFixed(5)} ${value >= 0 ? positive : negative}`
 }
 
 function App() {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapboxMap | null>(null)
   const markerRef = useRef<mapboxgl.Marker | null>(null)
+  const waypointMarkersRef = useRef<mapboxgl.Marker[]>([])
   const [cameraMode, setCameraMode] = useState<CameraMode>('pov')
+  const [waypoints, setWaypoints] = useState(initialWaypoints)
   const [waypointIndex, setWaypointIndex] = useState(0)
   const [isMoving, setIsMoving] = useState(false)
+  const [groundElevation, setGroundElevation] = useState<number | null>(null)
+  const [activeCoordinates, setActiveCoordinates] = useState<Coordinates>(
+    initialWaypoints[0].coordinates,
+  )
+  const [mapCenterCoordinates, setMapCenterCoordinates] =
+    useState<Coordinates>(initialWaypoints[0].coordinates)
+  const [latitudeInput, setLatitudeInput] = useState(
+    String(initialWaypoints[0].coordinates[1]),
+  )
+  const [longitudeInput, setLongitudeInput] = useState(
+    String(initialWaypoints[0].coordinates[0]),
+  )
+  const [coordinateError, setCoordinateError] = useState('')
   const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN
   const activeWaypoint = waypoints[waypointIndex]
 
@@ -52,11 +72,12 @@ function App() {
     mapboxgl.accessToken = token
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: 'mapbox://styles/mapbox/satellite-streets-v12',
-      center: waypoints[0].coordinates,
+      style: 'mapbox://styles/mapbox/standard-satellite',
+      center: initialWaypoints[0].coordinates,
       ...cameraSettings.pov,
       attributionControl: false,
       antialias: true,
+      maxPitch: 85,
     })
 
     const markerElement = document.createElement('div')
@@ -67,8 +88,51 @@ function App() {
       element: markerElement,
       rotationAlignment: 'map',
     })
-      .setLngLat(waypoints[0].coordinates)
+      .setLngLat(initialWaypoints[0].coordinates)
       .addTo(map)
+
+    const waypointMarkers = initialWaypoints.map((waypoint, index) => {
+      const element = document.createElement('button')
+      element.type = 'button'
+      element.className = 'waypoint-marker'
+      element.setAttribute('aria-label', `Select ${waypoint.name}`)
+
+      const pin = document.createElement('span')
+      pin.className = 'waypoint-pin'
+      pin.textContent = String(index + 1)
+
+      const label = document.createElement('span')
+      label.className = 'waypoint-label'
+      label.textContent = waypoint.name
+      element.append(pin, label)
+
+      const waypointMarker = new mapboxgl.Marker({
+        element,
+        anchor: 'bottom',
+        altitude: 1.5,
+        occludedOpacity: 0,
+        pitchAlignment: 'viewport',
+        rotationAlignment: 'viewport',
+      })
+        .setLngLat(waypoint.coordinates)
+        .addTo(map)
+
+      element.addEventListener('click', () => {
+        const position = waypointMarker.getLngLat()
+        const coordinates: Coordinates = [position.lng, position.lat]
+
+        setWaypointIndex(index)
+        setActiveCoordinates(coordinates)
+        setMapCenterCoordinates(coordinates)
+        setLatitudeInput(position.lat.toFixed(6))
+        setLongitudeInput(position.lng.toFixed(6))
+        setCoordinateError('')
+        marker.setLngLat(coordinates)
+        map.flyTo({ center: coordinates, duration: 1400, essential: true })
+      })
+
+      return waypointMarker
+    })
 
     map.addControl(
       new mapboxgl.AttributionControl({ compact: true }),
@@ -85,6 +149,49 @@ function App() {
       map.setTerrain({ source: 'mapbox-dem', exaggeration: 1.2 })
       map.setFog({ color: '#081411', 'horizon-blend': 0.12 })
 
+      map.addSource('building-footprints', {
+        type: 'vector',
+        url: 'mapbox://mapbox.mapbox-streets-v8',
+      })
+
+      map.addLayer({
+        id: '3d-buildings',
+        type: 'fill-extrusion',
+        source: 'building-footprints',
+        'source-layer': 'building',
+        minzoom: 14,
+        filter: ['==', ['get', 'extrude'], 'true'],
+        paint: {
+          'fill-extrusion-color': [
+            'interpolate',
+            ['linear'],
+            ['coalesce', ['get', 'height'], 8],
+            0,
+            '#2f403a',
+            40,
+            '#62736c',
+            160,
+            '#9aaba3',
+          ],
+          'fill-extrusion-height': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            14,
+            0,
+            14.4,
+            ['coalesce', ['get', 'height'], 8],
+          ],
+          'fill-extrusion-base': [
+            'coalesce',
+            ['get', 'min_height'],
+            0,
+          ],
+          'fill-extrusion-opacity': 0.68,
+          'fill-extrusion-vertical-gradient': true,
+        },
+      })
+
       map.addSource('mission-route', {
         type: 'geojson',
         data: {
@@ -92,7 +199,9 @@ function App() {
           properties: {},
           geometry: {
             type: 'LineString',
-            coordinates: waypoints.map((waypoint) => waypoint.coordinates),
+            coordinates: initialWaypoints.map(
+              (waypoint) => waypoint.coordinates,
+            ),
           },
         },
       })
@@ -122,20 +231,87 @@ function App() {
       })
     })
 
+    map.on('idle', () => {
+      const elevation = map.queryTerrainElevation(marker.getLngLat(), {
+        exaggerated: false,
+      })
+      if (elevation != null) setGroundElevation(Math.round(elevation))
+    })
+
+    map.on('move', () => {
+      const center = map.getCenter()
+      setMapCenterCoordinates([center.lng, center.lat])
+    })
+
+    map.on('moveend', () => {
+      const center = map.getCenter()
+      setLatitudeInput(center.lat.toFixed(6))
+      setLongitudeInput(center.lng.toFixed(6))
+      setCoordinateError('')
+    })
+
     mapRef.current = map
     markerRef.current = marker
+    waypointMarkersRef.current = waypointMarkers
 
     return () => {
+      waypointMarkers.forEach((waypointMarker) => waypointMarker.remove())
       marker.remove()
       map.remove()
       markerRef.current = null
+      waypointMarkersRef.current = []
       mapRef.current = null
     }
   }, [token])
 
+  useEffect(() => {
+    waypointMarkersRef.current.forEach((marker, index) => {
+      const waypoint = waypoints[index]
+      if (!waypoint) return
+
+      marker.setLngLat(waypoint.coordinates)
+      marker
+        .getElement()
+        .classList.toggle('active', index === waypointIndex)
+    })
+
+    const route = mapRef.current?.getSource('mission-route') as
+      | GeoJSONSource
+      | undefined
+    route?.setData({
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'LineString',
+        coordinates: waypoints.map((waypoint) => waypoint.coordinates),
+      },
+    })
+  }, [waypointIndex, waypoints])
+
   const selectMode = (mode: CameraMode) => {
     setCameraMode(mode)
-    updateCamera(mode, activeWaypoint.coordinates)
+
+    if (mode === 'overview' && mapRef.current) {
+      const bounds = waypoints.slice(1).reduce(
+        (currentBounds, waypoint) =>
+          currentBounds.extend(waypoint.coordinates),
+        new mapboxgl.LngLatBounds(
+          waypoints[0].coordinates,
+          waypoints[0].coordinates,
+        ),
+      )
+
+      mapRef.current.fitBounds(bounds, {
+        padding: { top: 120, right: 320, bottom: 140, left: 220 },
+        pitch: cameraSettings.overview.pitch,
+        bearing: cameraSettings.overview.bearing,
+        duration: 1400,
+        essential: true,
+      })
+      return
+    }
+
+    updateCamera(mode, activeCoordinates)
   }
 
   const moveToNextWaypoint = () => {
@@ -144,6 +320,11 @@ function App() {
 
     setIsMoving(true)
     setWaypointIndex(nextIndex)
+    setActiveCoordinates(nextWaypoint.coordinates)
+    setMapCenterCoordinates(nextWaypoint.coordinates)
+    setLatitudeInput(String(nextWaypoint.coordinates[1]))
+    setLongitudeInput(String(nextWaypoint.coordinates[0]))
+    setCoordinateError('')
     markerRef.current?.setLngLat(nextWaypoint.coordinates)
     updateCamera(cameraMode, nextWaypoint.coordinates, 3200)
 
@@ -160,6 +341,35 @@ function App() {
     })
 
     window.setTimeout(() => setIsMoving(false), 3200)
+  }
+
+  const applyCoordinates = () => {
+    const latitude = Number(latitudeInput)
+    const longitude = Number(longitudeInput)
+
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      setCoordinateError('Enter a valid latitude and longitude')
+      return
+    }
+
+    const coordinates: Coordinates = [longitude, latitude]
+    setCoordinateError('')
+    setActiveCoordinates(coordinates)
+    setMapCenterCoordinates(coordinates)
+    setWaypoints((currentWaypoints) =>
+      currentWaypoints.map((waypoint, index) =>
+        index === waypointIndex ? { ...waypoint, coordinates } : waypoint,
+      ),
+    )
+    markerRef.current?.setLngLat(coordinates)
+    updateCamera(cameraMode, coordinates, 2200)
   }
 
   return (
@@ -216,22 +426,50 @@ function App() {
           </div>
           <div>
             <dt>HDG</dt>
-            <dd>024 <small>deg</small></dd>
+            <dd>058 <small>deg</small></dd>
           </div>
           <div>
-            <dt>SIGNAL</dt>
-            <dd>98 <small>%</small></dd>
+            <dt>GND</dt>
+            <dd>{groundElevation ?? '--'} <small>m ASL</small></dd>
           </div>
         </dl>
       </aside>
 
       <section className="location-card hud-panel">
-        <p className="panel-label">Active waypoint</p>
+        <p className="panel-label">Map center / waypoint</p>
         <strong>{activeWaypoint.name}</strong>
-        <span>
-          {activeWaypoint.coordinates[1].toFixed(5)} N /{' '}
-          {activeWaypoint.coordinates[0].toFixed(5)} E
+        <span className="formatted-coordinate">
+          {formatCoordinate(mapCenterCoordinates[1], 'N', 'S')} /{' '}
+          {formatCoordinate(mapCenterCoordinates[0], 'E', 'W')}
         </span>
+        <div className="coordinate-fields">
+          <label>
+            <span>Latitude</span>
+            <input
+              type="number"
+              min="-90"
+              max="90"
+              step="0.000001"
+              value={latitudeInput}
+              onChange={(event) => setLatitudeInput(event.target.value)}
+            />
+          </label>
+          <label>
+            <span>Longitude</span>
+            <input
+              type="number"
+              min="-180"
+              max="180"
+              step="0.000001"
+              value={longitudeInput}
+              onChange={(event) => setLongitudeInput(event.target.value)}
+            />
+          </label>
+        </div>
+        {coordinateError && <p className="coordinate-error">{coordinateError}</p>}
+        <button type="button" onClick={applyCoordinates} disabled={!token}>
+          Apply coordinates
+        </button>
       </section>
 
       <div className="reticle" aria-hidden="true">
