@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "node --import tsx --env-file-if-exists=.env --watch server.ts",
     "start": "node --import tsx --env-file-if-exists=.env server.ts",
+    "test": "node --import tsx --test wake-trigger.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

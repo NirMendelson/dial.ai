@@ -9,10 +9,12 @@ import {
 import { Hono } from "hono";
 import OpenAI from "openai";
 import { WebSocketServer, type WebSocket } from "ws";
+import { containsWakeName, getLatestUserTurn } from "./wake-trigger.js";
 
 const port = Number(process.env.PORT || 8080);
 const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const signingSecret = process.env.DIAL_SIGNING_SECRET;
+const wakeName = process.env.AGENT_WAKE_NAME?.trim() || "ברק 1";
 
 if (!signingSecret) throw new Error("DIAL_SIGNING_SECRET is required");
 
@@ -135,7 +137,7 @@ app.get("/api/transcript/stream", (c) => {
 });
 
 const defaultPrompt =
-  "You are a concise autonomous drone operations assistant on a team phone call. Confirm commands clearly and keep replies short and natural.";
+  `You are ${wakeName}, a concise autonomous drone operations assistant on a team phone call. Confirm commands clearly, reply in the caller's language, and keep replies short and natural.`;
 
 const endCallHint =
   "When the conversation is finished or the caller wants to hang up, call the end_call tool with a brief, natural farewell instead of replying with text.";
@@ -330,6 +332,28 @@ function handleCall(ws: WebSocket, callId: string): void {
     }
   };
 
+  const answerSilently = (
+    responseId: number,
+    transcript: TranscriptItem[],
+  ): void => {
+    cancelInFlight();
+    publishTranscript(callId, transcript);
+
+    if (transcriptState.callId === callId && transcriptState.agentDraft) {
+      transcriptState = { ...transcriptState, agentDraft: "" };
+      broadcastTranscriptState();
+    }
+
+    ws.send(
+      serializeServerMessage({
+        type: "response",
+        response_id: responseId,
+        content: "",
+        content_complete: true,
+      }),
+    );
+  };
+
   ws.on("message", (raw) => {
     let message: DialServerMessage;
 
@@ -356,9 +380,23 @@ function handleCall(ws: WebSocket, callId: string): void {
           }),
         );
         break;
-      case "response_required":
-      case "reminder_required":
+      case "response_required": {
+        const latestUserTurn = getLatestUserTurn(message.transcript);
+
+        if (
+          !latestUserTurn ||
+          !containsWakeName(latestUserTurn.content, wakeName)
+        ) {
+          answerSilently(message.response_id, message.transcript);
+          break;
+        }
+
+        console.log(`[${callId}] wake name detected: ${wakeName}`);
         void answer(message.response_id, message.transcript);
+        break;
+      }
+      case "reminder_required":
+        answerSilently(message.response_id, message.transcript);
         break;
     }
   });
