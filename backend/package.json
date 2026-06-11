@@ -1,0 +1,25 @@
+{
+  "name": "dial-drone-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal Hono backend for a Dial self-hosted voice agent.",
+  "scripts": {
+    "dev": "node --import tsx --env-file-if-exists=.env --watch server.ts",
+    "start": "node --import tsx --env-file-if-exists=.env server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@getdial/sdk": "^0.6.2",
+    "@hono/node-server": "^1.19.7",
+    "hono": "^4.10.4",
+    "openai": "^4.70.0",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
