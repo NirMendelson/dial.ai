@@ -1,0 +1,22 @@
+:root {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  color: #c9ffe0;
+  background: #06100d;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100svh;
+}
