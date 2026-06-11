@@ -3,21 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
   "description": "Minimal Hono backend for a Dial self-hosted voice agent.",
   "scripts": {
     "dev": "node --import tsx --env-file-if-exists=.env --watch server.ts",
     "start": "node --import tsx --env-file-if-exists=.env server.ts",
-    "test": "node --import tsx --test wake-trigger.test.ts",
+    "test": "node --import tsx --test *.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@getdial/sdk": "^0.6.2",
     "@hono/node-server": "^1.19.7",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^12.10.0",
     "hono": "^4.10.4",
     "openai": "^4.70.0",
-    "ws": "^8.21.0"
+    "ws": "^8.21.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "tsx": "^4.19.0",

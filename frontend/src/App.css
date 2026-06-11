@@ -553,12 +553,14 @@ button {
 }
 
 .waypoint-marker:hover .waypoint-label,
-.waypoint-marker.active .waypoint-label {
+.waypoint-marker.active .waypoint-label,
+.waypoint-marker.lookup .waypoint-label {
   color: #06100d;
   background: var(--hud);
 }
 
-.waypoint-marker.active .waypoint-pin {
+.waypoint-marker.active .waypoint-pin,
+.waypoint-marker.lookup .waypoint-pin {
   box-shadow: 0 0 20px rgba(131, 255, 183, 0.85);
 }
 
@@ -578,6 +580,81 @@ button {
   color: #f4f7f5;
   background: #050706;
   box-shadow: -24px 0 70px rgba(0, 0, 0, 0.28);
+}
+
+.transcript-activity {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(120, 234, 170, 0.13);
+  background: rgba(120, 234, 170, 0.04);
+}
+
+.transcript-activity > i {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(120, 234, 170, 0.35);
+  color: #78eaaa;
+  font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: rgba(120, 234, 170, 0.08);
+}
+
+.transcript-activity.status > i {
+  width: 8px;
+  height: 8px;
+  margin: 0 10px;
+  border: 0;
+  border-radius: 50%;
+  background: #78eaaa;
+}
+
+.transcript-activity.running > i {
+  box-shadow: 0 0 10px rgba(120, 234, 170, 0.75);
+  animation: pulse 1.2s infinite;
+}
+
+.transcript-activity > div {
+  min-width: 0;
+}
+
+.transcript-activity span {
+  color: rgba(255, 255, 255, 0.38);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.transcript-activity strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  color: #a8f7c7;
+  font: 600 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+}
+
+.transcript-activity.succeeded {
+  border-left: 2px solid #78eaaa;
+}
+
+.transcript-activity.failed {
+  border-left: 2px solid #ff8585;
+}
+
+.transcript-activity b {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 7px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.transcript-activity.cancelled {
+  opacity: 0.55;
 }
 
 .transcript-header {
@@ -788,7 +865,7 @@ button {
     height: auto;
     min-height: 100svh;
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(520px, 62svh) minmax(360px, 38svh);
+    grid-template-rows: minmax(520px, 62svh) minmax(620px, auto);
     overflow: visible;
   }
 

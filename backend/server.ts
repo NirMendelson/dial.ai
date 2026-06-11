@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { serve } from "@hono/node-server";
 import {
   parseDialMessage,
@@ -9,6 +10,18 @@ import {
 import { Hono } from "hono";
 import OpenAI from "openai";
 import { WebSocketServer, type WebSocket } from "ws";
+import { z } from "zod";
+import {
+  createLocationMcpClient,
+  type LocationMcpClient,
+} from "./location-mcp-client.js";
+import type { Location } from "./location-store.js";
+import {
+  runToolLoop,
+  type PendingToolCall,
+  type StreamingCompletionClient,
+  type ToolExecutionResult,
+} from "./tool-loop.js";
 import { containsWakeName, getLatestUserTurn } from "./wake-trigger.js";
 
 const port = Number(process.env.PORT || 8080);
@@ -19,22 +32,64 @@ const wakeName = process.env.AGENT_WAKE_NAME?.trim() || "ברק 1";
 if (!signingSecret) throw new Error("DIAL_SIGNING_SECRET is required");
 
 const openai = new OpenAI();
+const locationMcp = await createLocationMcpClient();
 const app = new Hono();
 
 type TranscriptStatus = "waiting" | "connected" | "ended";
+
+export type StatusActivity = {
+  id: string;
+  type: "status";
+  phase: "processing" | "responding";
+  status: "running" | "completed" | "cancelled";
+  timestamp: string;
+  transcriptIndex: number;
+};
+
+export type ToolActivity = {
+  id: string;
+  type: "tool";
+  name: string;
+  status: "running" | "succeeded" | "failed" | "cancelled";
+  input: unknown;
+  output?: unknown;
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
+  transcriptIndex: number;
+};
+
+export type AgentActivity = StatusActivity | ToolActivity;
 
 type TranscriptState = {
   callId: string | null;
   status: TranscriptStatus;
   transcript: TranscriptItem[];
   agentDraft: string;
+  activities: AgentActivity[];
+  locations: Location[];
 };
 
+function readLocations(result: unknown): Location[] {
+  if (
+    typeof result !== "object" ||
+    result === null ||
+    !("locations" in result) ||
+    !Array.isArray(result.locations)
+  ) {
+    throw new Error("list_locations returned an invalid result");
+  }
+  return result.locations as Location[];
+}
+
+const locations = readLocations(await locationMcp.callTool("list_locations", {}));
 let transcriptState: TranscriptState = {
   callId: null,
   status: "waiting",
   transcript: [],
   agentDraft: "",
+  activities: [],
+  locations,
 };
 
 const transcriptSubscribers = new Map<
@@ -60,6 +115,73 @@ function broadcastTranscriptState(): void {
       transcriptSubscribers.delete(subscriber);
     }
   }
+}
+
+function appendActivity(callId: string, activity: AgentActivity): void {
+  if (transcriptState.callId !== callId) return;
+  transcriptState = {
+    ...transcriptState,
+    activities: [...transcriptState.activities, activity].slice(-50),
+  };
+  broadcastTranscriptState();
+}
+
+function replaceActivity(
+  callId: string,
+  activityId: string,
+  update: (activity: AgentActivity) => AgentActivity,
+): void {
+  if (transcriptState.callId !== callId) return;
+  transcriptState = {
+    ...transcriptState,
+    activities: transcriptState.activities.map((activity) =>
+      activity.id === activityId ? update(activity) : activity,
+    ),
+  };
+  broadcastTranscriptState();
+}
+
+function startStatusActivity(
+  callId: string,
+  phase: StatusActivity["phase"],
+): string {
+  const id = randomUUID();
+  appendActivity(callId, {
+    id,
+    type: "status",
+    phase,
+    status: "running",
+    timestamp: new Date().toISOString(),
+    transcriptIndex: transcriptState.transcript.length,
+  });
+  return id;
+}
+
+function finishStatusActivity(
+  callId: string,
+  activityId: string,
+  status: "completed" | "cancelled",
+): void {
+  replaceActivity(callId, activityId, (activity) =>
+    activity.type === "status" ? { ...activity, status } : activity,
+  );
+}
+
+function cancelRunningActivities(callId: string): void {
+  if (transcriptState.callId !== callId) return;
+  const finishedAt = new Date().toISOString();
+  let changed = false;
+  const activities = transcriptState.activities.map((activity): AgentActivity => {
+    if (activity.status !== "running") return activity;
+    changed = true;
+    return activity.type === "status"
+      ? { ...activity, status: "cancelled" }
+      : { ...activity, status: "cancelled", finishedAt };
+  });
+
+  if (!changed) return;
+  transcriptState = { ...transcriptState, activities };
+  broadcastTranscriptState();
 }
 
 function draftAppearsInTranscript(
@@ -139,28 +261,44 @@ app.get("/api/transcript/stream", (c) => {
 const defaultPrompt =
   `You are ${wakeName}, a concise autonomous drone operations assistant on a team phone call. Confirm commands clearly, reply in the caller's language, and keep replies short and natural.`;
 
+const toolHint =
+  "Use the location tools when a command depends on a named place or relative position. Look locations up before calculating coordinates, and call go_to only after the destination is resolved.";
+
 const endCallHint =
   "When the conversation is finished or the caller wants to hang up, call the end_call tool with a brief, natural farewell instead of replying with text.";
 
-const tools: OpenAI.Chat.ChatCompletionTool[] = [
-  {
-    type: "function",
-    function: {
-      name: "end_call",
-      description: "End the phone call when the task or conversation is complete.",
-      parameters: {
-        type: "object",
-        properties: {
-          farewell: {
-            type: "string",
-            description: "A short, natural goodbye to say before hanging up.",
-          },
+const endCallTool: OpenAI.Chat.ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "end_call",
+    description: "End the phone call when the task or conversation is complete.",
+    parameters: {
+      type: "object",
+      properties: {
+        farewell: {
+          type: "string",
+          description: "A short, natural goodbye to say before hanging up.",
         },
-        required: ["farewell"],
       },
+      required: ["farewell"],
+      additionalProperties: false,
     },
   },
-];
+};
+
+const mcpTools: OpenAI.Chat.ChatCompletionTool[] = locationMcp.tools.map(
+  (tool) => ({
+    type: "function",
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.inputSchema,
+    },
+  }),
+);
+const tools = [endCallTool, ...mcpTools];
+const mcpToolNames = new Set(locationMcp.tools.map((tool) => tool.name));
+const endCallArguments = z.object({ farewell: z.string().trim().min(1) });
 
 const server = serve({ fetch: app.fetch, port });
 const wss = new WebSocketServer({ noServer: true });
@@ -188,13 +326,20 @@ function toMessages(
   transcript: TranscriptItem[],
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
   return [
-    { role: "system", content: `${instruction}\n\n${endCallHint}` },
+    {
+      role: "system",
+      content: `${instruction}\n\n${toolHint}\n\n${endCallHint}`,
+    },
     ...transcript.map((item): OpenAI.Chat.ChatCompletionMessageParam =>
       item.role === "agent"
         ? { role: "assistant", content: item.content }
         : { role: "user", content: item.content },
     ),
   ];
+}
+
+function parseToolInput(rawArguments: string): unknown {
+  return JSON.parse(rawArguments || "{}");
 }
 
 function handleCall(ws: WebSocket, callId: string): void {
@@ -206,6 +351,8 @@ function handleCall(ws: WebSocket, callId: string): void {
       status: "connected",
       transcript: [],
       agentDraft: "",
+      activities: [],
+      locations,
     };
   } else {
     transcriptState = { ...transcriptState, status: "connected" };
@@ -216,8 +363,106 @@ function handleCall(ws: WebSocket, callId: string): void {
   let systemInstruction = defaultPrompt;
 
   const cancelInFlight = (): void => {
-    inFlight?.abort();
+    if (!inFlight) return;
+    inFlight.abort();
     inFlight = null;
+    cancelRunningActivities(callId);
+  };
+
+  const executeTool = async (
+    toolCall: PendingToolCall,
+    signal: AbortSignal,
+  ): Promise<ToolExecutionResult> => {
+    const activityId = toolCall.id || randomUUID();
+    const startedAt = new Date().toISOString();
+    let input: unknown;
+
+    try {
+      input = parseToolInput(toolCall.arguments);
+    } catch {
+      const error = "Tool arguments were not valid JSON";
+      appendActivity(callId, {
+        id: activityId,
+        type: "tool",
+        name: toolCall.name || "unknown",
+        status: "failed",
+        input: { raw: toolCall.arguments },
+        error,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        transcriptIndex: transcriptState.transcript.length,
+      });
+      return { output: { error } };
+    }
+
+    appendActivity(callId, {
+      id: activityId,
+      type: "tool",
+      name: toolCall.name,
+      status: "running",
+      input,
+      startedAt,
+      transcriptIndex: transcriptState.transcript.length,
+    });
+
+    try {
+      signal.throwIfAborted();
+      let result: ToolExecutionResult;
+
+      if (toolCall.name === "end_call") {
+        const args = endCallArguments.parse(input);
+        result = {
+          output: { ended: true },
+          endCall: true,
+          content: args.farewell,
+        };
+      } else {
+        if (!mcpToolNames.has(toolCall.name)) {
+          throw new Error(`Unknown tool: ${toolCall.name}`);
+        }
+        result = {
+          output: await locationMcp.callTool(toolCall.name, input, signal),
+        };
+      }
+
+      replaceActivity(callId, activityId, (activity) =>
+        activity.type === "tool"
+          ? {
+              ...activity,
+              status: "succeeded",
+              output: result.output,
+              finishedAt: new Date().toISOString(),
+            }
+          : activity,
+      );
+      return result;
+    } catch (error) {
+      if (signal.aborted) {
+        replaceActivity(callId, activityId, (activity) =>
+          activity.type === "tool"
+            ? {
+                ...activity,
+                status: "cancelled",
+                finishedAt: new Date().toISOString(),
+              }
+            : activity,
+        );
+        signal.throwIfAborted();
+      }
+
+      const message = error instanceof Error ? error.message : "Tool failed";
+      replaceActivity(callId, activityId, (activity) =>
+        activity.type === "tool"
+          ? {
+              ...activity,
+              status: "failed",
+              error: message,
+              finishedAt: new Date().toISOString(),
+            }
+          : activity,
+      );
+      return { output: { error: message } };
+    }
   };
 
   const answer = async (
@@ -234,99 +479,60 @@ function handleCall(ws: WebSocket, callId: string): void {
 
     const controller = new AbortController();
     inFlight = controller;
+    const processingId = startStatusActivity(callId, "processing");
 
     try {
-      const stream = await openai.chat.completions.create(
-        {
-          model,
-          messages: toMessages(systemInstruction, transcript),
-          stream: true,
-          tools,
-          tool_choice: "auto",
-        },
-        { signal: controller.signal },
-      );
-
-      let toolName = "";
-      let toolArgs = "";
-
-      for await (const chunk of stream) {
-        if (controller.signal.aborted) return;
-
-        const delta = chunk.choices[0]?.delta;
-        if (delta?.content) {
-          if (transcriptState.callId === callId) {
-            transcriptState = {
-              ...transcriptState,
-              agentDraft: transcriptState.agentDraft + delta.content,
-            };
-            broadcastTranscriptState();
-          }
-
-          ws.send(
-            serializeServerMessage({
-              type: "response",
-              response_id: responseId,
-              content: delta.content,
-              content_complete: false,
-            }),
-          );
-        }
-
-        const toolCall = delta?.tool_calls?.[0];
-        if (toolCall?.function?.name) toolName = toolCall.function.name;
-        if (toolCall?.function?.arguments) toolArgs += toolCall.function.arguments;
-      }
-
-      if (controller.signal.aborted) return;
-
-      if (toolName === "end_call") {
-        let farewell = "Thanks for calling. Goodbye!";
-
-        try {
-          const args: unknown = JSON.parse(toolArgs || "{}");
-          if (
-            typeof args === "object" &&
-            args !== null &&
-            "farewell" in args &&
-            typeof args.farewell === "string" &&
-            args.farewell.trim()
-          ) {
-            farewell = args.farewell;
-          }
-        } catch {
-          // Keep the default farewell when tool arguments are incomplete.
-        }
-
-        if (transcriptState.callId === callId) {
-          transcriptState = { ...transcriptState, agentDraft: farewell };
+      const result = await runToolLoop({
+        client: openai.chat.completions as StreamingCompletionClient,
+        model,
+        messages: toMessages(systemInstruction, transcript),
+        tools,
+        signal: controller.signal,
+        executeTool,
+        onDraft(content) {
+          if (transcriptState.callId !== callId) return;
+          transcriptState = { ...transcriptState, agentDraft: content };
           broadcastTranscriptState();
-        }
+        },
+      });
 
-        ws.send(
-          serializeServerMessage({
-            type: "response",
-            response_id: responseId,
-            content: farewell,
-            content_complete: true,
-            end_call: true,
-          }),
-        );
-        return;
+      finishStatusActivity(callId, processingId, "completed");
+      const respondingId = startStatusActivity(callId, "responding");
+      if (transcriptState.callId === callId) {
+        transcriptState = { ...transcriptState, agentDraft: result.content };
+        broadcastTranscriptState();
       }
 
       ws.send(
         serializeServerMessage({
           type: "response",
           response_id: responseId,
-          content: "",
+          content: result.content,
+          content_complete: true,
+          ...(result.endCall ? { end_call: true } : {}),
+        }),
+      );
+      finishStatusActivity(callId, respondingId, "completed");
+    } catch (error) {
+      if (controller.signal.aborted) return;
+
+      console.error(`[${callId}] agent error`, error);
+      finishStatusActivity(callId, processingId, "completed");
+      const respondingId = startStatusActivity(callId, "responding");
+      const fallback = "לא הצלחתי להשלים את הפקודה.";
+      if (transcriptState.callId === callId) {
+        transcriptState = { ...transcriptState, agentDraft: fallback };
+        broadcastTranscriptState();
+      }
+      ws.send(
+        serializeServerMessage({
+          type: "response",
+          response_id: responseId,
+          content: fallback,
           content_complete: true,
         }),
       );
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        console.error(`[${callId}] OpenAI error`, error);
-      }
+      finishStatusActivity(callId, respondingId, "completed");
     } finally {
       if (inFlight === controller) inFlight = null;
     }
@@ -411,6 +617,8 @@ function handleCall(ws: WebSocket, callId: string): void {
   });
 }
 
-console.log(`Dial drone backend listening on http://localhost:${port}`);
+console.log(
+  `Dial drone backend listening on http://localhost:${port} with ${locationMcp.tools.length} MCP tools`,
+);
 
 export default app;
