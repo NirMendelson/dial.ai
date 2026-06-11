@@ -5,6 +5,22 @@ import './App.css'
 
 type CameraMode = 'pov' | 'recon' | 'overview'
 type Coordinates = [longitude: number, latitude: number]
+type TranscriptRole = 'user' | 'agent'
+type TranscriptStatus = 'waiting' | 'connected' | 'ended'
+
+type TranscriptState = {
+  callId: string | null
+  status: TranscriptStatus
+  transcript: Array<{ role: TranscriptRole; content: string }>
+  agentDraft: string
+}
+
+const initialTranscriptState: TranscriptState = {
+  callId: null,
+  status: 'waiting',
+  transcript: [],
+  agentDraft: '',
+}
 
 const initialWaypoints: Array<{ name: string; coordinates: Coordinates }> = [
   { name: 'Hill', coordinates: [-116.655204, 35.273822] },
@@ -24,6 +40,140 @@ const cameraSettings: Record<
 
 function formatCoordinate(value: number, positive: string, negative: string) {
   return `${Math.abs(value).toFixed(5)} ${value >= 0 ? positive : negative}`
+}
+
+function getTextDirection(content: string): 'rtl' | 'ltr' {
+  return /[\u0590-\u05ff]/.test(content) ? 'rtl' : 'ltr'
+}
+
+function TranscriptPanel() {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const shouldAutoScrollRef = useRef(true)
+  const [state, setState] = useState(initialTranscriptState)
+  const [isReconnecting, setIsReconnecting] = useState(false)
+
+  useEffect(() => {
+    const source = new EventSource('/api/transcript/stream')
+
+    const handleState = (event: Event) => {
+      try {
+        const nextState = JSON.parse(
+          (event as MessageEvent<string>).data,
+        ) as TranscriptState
+        setState(nextState)
+        setIsReconnecting(false)
+      } catch {
+        setIsReconnecting(true)
+      }
+    }
+
+    source.addEventListener('state', handleState)
+    source.onopen = () => setIsReconnecting(false)
+    source.onerror = () => setIsReconnecting(true)
+
+    return () => {
+      source.removeEventListener('state', handleState)
+      source.close()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!shouldAutoScrollRef.current || !scrollRef.current) return
+
+    const frame = window.requestAnimationFrame(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      }
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [state.agentDraft, state.transcript])
+
+  const handleScroll = () => {
+    const container = scrollRef.current
+    if (!container) return
+
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight
+    shouldAutoScrollRef.current = distanceFromBottom < 80
+  }
+
+  const displayStatus = isReconnecting
+    ? 'reconnecting'
+    : state.status === 'connected'
+      ? 'live'
+      : state.status
+
+  const hasTranscript = state.transcript.length > 0 || state.agentDraft
+
+  return (
+    <aside className="transcript-panel">
+      <header className="transcript-header">
+        <div>
+          <p>Live channel</p>
+          <h2>Transcript</h2>
+        </div>
+        <span className={`transcript-status ${displayStatus}`}>
+          <i />
+          {displayStatus}
+        </span>
+      </header>
+
+      <div
+        ref={scrollRef}
+        className="transcript-scroll"
+        onScroll={handleScroll}
+      >
+        {!hasTranscript && (
+          <div className="transcript-empty">
+            <span className="empty-line" />
+            <p>
+              {state.status === 'ended'
+                ? 'Call ended without a transcript.'
+                : 'Waiting for call activity...'}
+            </p>
+          </div>
+        )}
+
+        <div className="transcript-list" aria-live="polite">
+          {state.transcript.map((item, index) => (
+            <article
+              className={`transcript-entry ${item.role}`}
+              key={`${index}-${item.role}-${item.content}`}
+            >
+              <span>
+                {item.role === 'agent' ? 'Drone Agent' : 'Operations'}
+              </span>
+              <p
+                dir={getTextDirection(item.content)}
+                lang={getTextDirection(item.content) === 'rtl' ? 'he' : 'en'}
+              >
+                {item.content}
+              </p>
+            </article>
+          ))}
+
+          {state.agentDraft && (
+            <article className="transcript-entry agent draft">
+              <span>Drone Agent</span>
+              <p
+                dir={getTextDirection(state.agentDraft)}
+                lang={getTextDirection(state.agentDraft) === 'rtl' ? 'he' : 'en'}
+              >
+                {state.agentDraft}
+                <i className="draft-cursor" />
+              </p>
+            </article>
+          )}
+        </div>
+      </div>
+
+      <footer className="transcript-footer">
+        <span>{state.callId ? 'Connected to Dial' : 'No active call'}</span>
+        {state.callId && <code>{state.callId.slice(-10)}</code>}
+      </footer>
+    </aside>
+  )
 }
 
 function App() {
@@ -373,7 +523,8 @@ function App() {
   }
 
   return (
-    <main className="drone-console">
+    <main className="app-shell">
+      <section className="drone-console">
       <div ref={containerRef} className="map-canvas" />
 
       {!token && (
@@ -503,6 +654,9 @@ function App() {
           <b>{isMoving ? '...' : '>'}</b>
         </button>
       </footer>
+      </section>
+
+      <TranscriptPanel />
     </main>
   )
 }

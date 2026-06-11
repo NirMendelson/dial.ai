@@ -19,8 +19,120 @@ if (!signingSecret) throw new Error("DIAL_SIGNING_SECRET is required");
 const openai = new OpenAI();
 const app = new Hono();
 
+type TranscriptStatus = "waiting" | "connected" | "ended";
+
+type TranscriptState = {
+  callId: string | null;
+  status: TranscriptStatus;
+  transcript: TranscriptItem[];
+  agentDraft: string;
+};
+
+let transcriptState: TranscriptState = {
+  callId: null,
+  status: "waiting",
+  transcript: [],
+  agentDraft: "",
+};
+
+const transcriptSubscribers = new Map<
+  ReadableStreamDefaultController<Uint8Array>,
+  ReturnType<typeof setInterval>
+>();
+const textEncoder = new TextEncoder();
+
+function encodeSseState(): Uint8Array {
+  return textEncoder.encode(
+    `event: state\ndata: ${JSON.stringify(transcriptState)}\n\n`,
+  );
+}
+
+function broadcastTranscriptState(): void {
+  const message = encodeSseState();
+
+  for (const [subscriber, heartbeat] of transcriptSubscribers) {
+    try {
+      subscriber.enqueue(message);
+    } catch {
+      clearInterval(heartbeat);
+      transcriptSubscribers.delete(subscriber);
+    }
+  }
+}
+
+function draftAppearsInTranscript(
+  transcript: TranscriptItem[],
+  draft: string,
+): boolean {
+  const normalizedDraft = draft.trim();
+  if (!normalizedDraft) return false;
+
+  const latestItem = transcript[transcript.length - 1];
+  if (latestItem?.role !== "agent") return false;
+
+  const normalizedContent = latestItem.content.trim();
+  return (
+    normalizedContent.length > 0 &&
+    (normalizedContent.includes(normalizedDraft) ||
+      normalizedDraft.includes(normalizedContent))
+  );
+}
+
+function publishTranscript(
+  callId: string,
+  transcript: TranscriptItem[],
+): void {
+  if (transcriptState.callId !== callId) return;
+
+  transcriptState = {
+    ...transcriptState,
+    transcript,
+    agentDraft: draftAppearsInTranscript(
+      transcript,
+      transcriptState.agentDraft,
+    )
+      ? ""
+      : transcriptState.agentDraft,
+  };
+  broadcastTranscriptState();
+}
+
 app.get("/", (c) => c.json({ service: "dial-drone-backend", status: "ok" }));
 app.get("/health", (c) => c.json({ status: "ok" }));
+app.get("/api/transcript", (c) => c.json(transcriptState));
+app.get("/api/transcript/stream", (c) => {
+  let subscriber: ReadableStreamDefaultController<Uint8Array> | null = null;
+
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      subscriber = controller;
+      controller.enqueue(encodeSseState());
+      const heartbeat = setInterval(() => {
+        try {
+          controller.enqueue(textEncoder.encode(": keepalive\n\n"));
+        } catch {
+          clearInterval(heartbeat);
+          transcriptSubscribers.delete(controller);
+        }
+      }, 15_000);
+      transcriptSubscribers.set(controller, heartbeat);
+    },
+    cancel() {
+      if (!subscriber) return;
+
+      const heartbeat = transcriptSubscribers.get(subscriber);
+      if (heartbeat) clearInterval(heartbeat);
+      transcriptSubscribers.delete(subscriber);
+    },
+  });
+
+  return c.body(body, 200, {
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "Content-Type": "text/event-stream",
+    "X-Accel-Buffering": "no",
+  });
+});
 
 const defaultPrompt =
   "You are a concise autonomous drone operations assistant on a team phone call. Confirm commands clearly and keep replies short and natural.";
@@ -86,6 +198,18 @@ function toMessages(
 function handleCall(ws: WebSocket, callId: string): void {
   console.log(`[${callId}] connected`);
 
+  if (transcriptState.callId !== callId) {
+    transcriptState = {
+      callId,
+      status: "connected",
+      transcript: [],
+      agentDraft: "",
+    };
+  } else {
+    transcriptState = { ...transcriptState, status: "connected" };
+  }
+  broadcastTranscriptState();
+
   let inFlight: AbortController | null = null;
   let systemInstruction = defaultPrompt;
 
@@ -99,6 +223,13 @@ function handleCall(ws: WebSocket, callId: string): void {
     transcript: TranscriptItem[],
   ): Promise<void> => {
     cancelInFlight();
+    publishTranscript(callId, transcript);
+
+    if (transcriptState.callId === callId) {
+      transcriptState = { ...transcriptState, agentDraft: "" };
+      broadcastTranscriptState();
+    }
+
     const controller = new AbortController();
     inFlight = controller;
 
@@ -122,6 +253,14 @@ function handleCall(ws: WebSocket, callId: string): void {
 
         const delta = chunk.choices[0]?.delta;
         if (delta?.content) {
+          if (transcriptState.callId === callId) {
+            transcriptState = {
+              ...transcriptState,
+              agentDraft: transcriptState.agentDraft + delta.content,
+            };
+            broadcastTranscriptState();
+          }
+
           ws.send(
             serializeServerMessage({
               type: "response",
@@ -155,6 +294,11 @@ function handleCall(ws: WebSocket, callId: string): void {
           }
         } catch {
           // Keep the default farewell when tool arguments are incomplete.
+        }
+
+        if (transcriptState.callId === callId) {
+          transcriptState = { ...transcriptState, agentDraft: farewell };
+          broadcastTranscriptState();
         }
 
         ws.send(
@@ -201,6 +345,9 @@ function handleCall(ws: WebSocket, callId: string): void {
       case "call_connected":
         if (message.instruction) systemInstruction = message.instruction;
         break;
+      case "transcript_update":
+        publishTranscript(callId, message.transcript);
+        break;
       case "ping_pong":
         ws.send(
           serializeServerMessage({
@@ -218,6 +365,10 @@ function handleCall(ws: WebSocket, callId: string): void {
 
   ws.on("close", () => {
     cancelInFlight();
+    if (transcriptState.callId === callId) {
+      transcriptState = { ...transcriptState, status: "ended" };
+      broadcastTranscriptState();
+    }
     console.log(`[${callId}] closed`);
   });
 }
