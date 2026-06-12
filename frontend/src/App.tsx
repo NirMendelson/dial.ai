@@ -223,10 +223,8 @@ function App() {
   const processedActivityIdsRef = useRef(new Set<string>())
   const processedCallIdRef = useRef<string | null>(null)
   const activeCoordinatesRef = useRef<Coordinates | null>(null)
-  const cameraModeRef = useRef<CameraMode>('pov')
   const [state, setState] = useState(initialTranscriptState)
   const [isReconnecting, setIsReconnecting] = useState(false)
-  const [cameraMode, setCameraMode] = useState<CameraMode>('pov')
   const [waypoints, setWaypoints] = useState<
     Array<{ name: string; coordinates: Coordinates }>
   >([])
@@ -287,10 +285,6 @@ function App() {
     activeCoordinatesRef.current = activeCoordinates
   }, [activeCoordinates])
 
-  useEffect(() => {
-    cameraModeRef.current = cameraMode
-  }, [cameraMode])
-
   const navigateToCoordinates = useCallback(
     (coordinates: Coordinates, label: string, duration = 3200) => {
       const marker = markerRef.current
@@ -307,7 +301,7 @@ function App() {
       setMissionTarget({ name: label, coordinates })
       setActiveCoordinates(coordinates)
       setMapCenterCoordinates(coordinates)
-      updateCamera(cameraModeRef.current, coordinates, duration)
+      updateCamera('pov', coordinates, duration)
 
       const route = mapRef.current?.getSource('mission-route') as
         | GeoJSONSource
@@ -673,43 +667,6 @@ function App() {
     })
   }, [highlightedLocationName, waypointIndex, waypoints])
 
-  const selectMode = (mode: CameraMode) => {
-    setCameraMode(mode)
-
-    if (!activeCoordinates || waypoints.length === 0) return
-
-    if (mode === 'overview' && mapRef.current) {
-      const bounds = waypoints.slice(1).reduce(
-        (currentBounds, waypoint) =>
-          currentBounds.extend(waypoint.coordinates),
-        new mapboxgl.LngLatBounds(
-          waypoints[0].coordinates,
-          waypoints[0].coordinates,
-        ),
-      )
-
-      mapRef.current.fitBounds(bounds, {
-        padding: { top: 120, right: 320, bottom: 140, left: 220 },
-        pitch: cameraSettings.overview.pitch,
-        bearing: cameraSettings.overview.bearing,
-        duration: 1400,
-        essential: true,
-      })
-      return
-    }
-
-    updateCamera(mode, activeCoordinates)
-  }
-
-  const moveToNextWaypoint = () => {
-    if (waypoints.length === 0) return
-    const nextIndex = (waypointIndex + 1) % waypoints.length
-    const nextWaypoint = waypoints[nextIndex]
-
-    setWaypointIndex(nextIndex)
-    navigateToCoordinates(nextWaypoint.coordinates, nextWaypoint.name)
-  }
-
   return (
     <main className="app-shell">
       <section className="drone-console">
@@ -733,22 +690,18 @@ function App() {
         <div className="brand">
           <span className="brand-mark">D</span>
           <div>
-            <strong>DIAL AERIAL</strong>
+            <strong>COMBAT DIAL</strong>
             <span>Autonomous response unit</span>
           </div>
         </div>
 
-        <div className="mission-status">
-          <span className="status-dot" />
-          <div>
-            <span>Mission status</span>
-            <strong>{isMoving ? 'IN TRANSIT' : 'HOLDING POSITION'}</strong>
-          </div>
-        </div>
+        <strong className="mission-action">
+          {isMoving ? 'IN TRANSIT' : 'HOLDING POSITION'}
+        </strong>
 
         <div className="clock">
           <span>UNIT</span>
-          <strong>DRN-01</strong>
+          <strong>BARAK-01</strong>
         </div>
       </header>
 
@@ -791,30 +744,6 @@ function App() {
         <span>OPTICAL LOCK</span>
       </div>
 
-      <footer className="command-deck hud-panel">
-        <div className="camera-modes" aria-label="Camera mode">
-          {(['pov', 'recon', 'overview'] as CameraMode[]).map((mode) => (
-            <button
-              key={mode}
-              className={cameraMode === mode ? 'active' : ''}
-              onClick={() => selectMode(mode)}
-              type="button"
-            >
-              {mode}
-            </button>
-          ))}
-        </div>
-
-        <button
-          className="move-command"
-          type="button"
-          onClick={moveToNextWaypoint}
-          disabled={!token || isMoving || waypoints.length === 0}
-        >
-          <span>{isMoving ? 'Navigating' : 'Move to next waypoint'}</span>
-          <b>{isMoving ? '...' : '>'}</b>
-        </button>
-      </footer>
       </section>
 
       <TranscriptPanel state={state} isReconnecting={isReconnecting} />

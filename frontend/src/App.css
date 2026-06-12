@@ -87,8 +87,7 @@ button {
   clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
 }
 
-.brand,
-.mission-status {
+.brand {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -107,14 +106,12 @@ button {
 }
 
 .brand div,
-.mission-status div,
 .clock {
   display: flex;
   flex-direction: column;
 }
 
 .brand strong,
-.mission-status strong,
 .clock strong {
   color: var(--hud-bright);
   font-size: 12px;
@@ -122,7 +119,6 @@ button {
 }
 
 .brand span,
-.mission-status span,
 .clock span {
   color: var(--hud-muted);
   font-size: 9px;
@@ -130,21 +126,15 @@ button {
   text-transform: uppercase;
 }
 
-.mission-status {
+.mission-action {
   min-width: 220px;
-  justify-content: center;
   padding: 7px 24px;
   border-right: 1px solid var(--line);
   border-left: 1px solid var(--line);
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #83ffb7;
-  box-shadow: 0 0 16px #83ffb7;
-  animation: pulse 1.8s infinite;
+  color: var(--hud-bright);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-align: center;
 }
 
 .clock {
@@ -202,7 +192,7 @@ button {
 .location-card {
   position: absolute;
   right: 20px;
-  bottom: 112px;
+  bottom: 20px;
   display: flex;
   width: 286px;
   flex-direction: column;
@@ -354,72 +344,6 @@ button {
   color: rgba(220, 255, 235, 0.62);
   font-size: 8px;
   letter-spacing: 0.24em;
-}
-
-.command-deck {
-  position: absolute;
-  bottom: 20px;
-  left: 50%;
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  min-width: 530px;
-  padding: 10px;
-  transform: translateX(-50%);
-}
-
-.camera-modes {
-  display: flex;
-  gap: 5px;
-}
-
-.camera-modes button,
-.move-command {
-  border: 1px solid transparent;
-  color: var(--hud-muted);
-  background: transparent;
-  cursor: pointer;
-  text-transform: uppercase;
-}
-
-.camera-modes button {
-  padding: 10px 12px;
-  font-size: 9px;
-  letter-spacing: 0.12em;
-}
-
-.camera-modes button:hover,
-.camera-modes button.active {
-  border-color: var(--line);
-  color: var(--hud-bright);
-  background: rgba(185, 255, 215, 0.09);
-}
-
-.move-command {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  justify-content: space-between;
-  min-width: 220px;
-  padding: 12px 14px;
-  color: #06100d;
-  background: var(--hud);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-}
-
-.move-command:hover:not(:disabled) {
-  background: #f0fff6;
-}
-
-.move-command:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
-
-.move-command b {
-  font-size: 17px;
 }
 
 .token-panel {
@@ -881,7 +805,7 @@ button {
     grid-template-columns: 1fr auto;
   }
 
-  .mission-status {
+  .mission-action {
     display: none;
   }
 
@@ -891,24 +815,7 @@ button {
 
   .location-card {
     right: 12px;
-    bottom: 112px;
-    width: 270px;
-  }
-
-  .command-deck {
     bottom: 12px;
-    width: calc(100% - 24px);
-    min-width: 0;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .camera-modes,
-  .move-command {
-    width: 100%;
-  }
-
-  .camera-modes button {
-    flex: 1;
+    width: 270px;
   }
 }
